@@ -2,7 +2,7 @@
 library(readr)
 test<-read_csv("D:\\Maggie\\nk university\\kaggle_g_store\\all\\test.csv")
 train<-read_csv("D:\\Maggie\\nk university\\kaggle_g_store\\all\\train.csv")
-#discription:
+#description:
 # fullVisitorId- A unique identifier for each user of the Google Merchandise Store.
 # channelGrouping - The channel via which the user came to the Store.
 # date - The date on which the user visited the Store.
