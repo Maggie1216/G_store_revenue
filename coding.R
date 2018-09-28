@@ -2,7 +2,7 @@
 library(readr)
 test<-read_csv("D:\\Maggie\\nk university\\kaggle_g_store\\all\\test.csv")
 train<-read_csv("D:\\Maggie\\nk university\\kaggle_g_store\\all\\train.csv")
-#description:
+#discription:
 # fullVisitorId- A unique identifier for each user of the Google Merchandise Store.
 # channelGrouping - The channel via which the user came to the Store.
 # date - The date on which the user visited the Store.
@@ -24,6 +24,7 @@ library(purrr)
 library(lubridate)
 library(VIM)
 library(mice)
+library(nnet)
 
 #1. datetime format cleaning
 train[[12]]<-as.POSIXlt(train[[12]],origin="1970-01-01")
@@ -102,6 +103,10 @@ makena<-function(df){
 }
 dflst<-c(traindevice,traingeoNetwork,traintotals,traintrafficSource)
 trainyall<-cbind(trainy,makena(dflst))
+#filling na-must
+trainyall[,"newVisits"]<-as.numeric(as.character(trainyall[,"newVisits"]))#un-factor this column
+trainyall[,"newVisits"]<-replace(trainyall[,"newVisits"],is.na(trainyall[,"newVisits"]),0)
+trainyall[,"isTrueDirect"]<-replace(trainyall[,"isTrueDirect"],is.na(trainyall[,"isTrueDirect"]),FALSE)
 #deleting na
 missing<-aggr(trainyall,plot = FALSE)[[5]]#missing values count in each column
 deletenalst<-function(alldf,missingdf,tol=1){
@@ -109,9 +114,14 @@ deletenalst<-function(alldf,missingdf,tol=1){
   dellist<-missingdf[missingdf$Count>=threshold,"Variable"]
   return(dellist)
 }
-dellist<-deletenalst(trainyall,missing)
+dellist<-deletenalst(trainyall,missing,0.15)#
 trainyall[,dellist]<-NULL
+#filling na-rest
+
+
 
 #5.Dealing with repetitive values
 trainyall["uniqueid"]<-paste(trainyall$fullVisitorId,trainyall$sessionId)
-trainyall[trainyall[['uniqueid']]=='2571951630476198714 2571951630476198714_1472105745',]
+trainyall[trainyall[['uniqueid']]=='2571951630476198714_1472105745',]
+trainyall<-trainyall[-5812,]
+trainyall[,"uniqueid"]<-NULL
