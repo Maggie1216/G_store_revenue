@@ -18,7 +18,7 @@ train<-read_csv("D:\\Maggie\\nk university\\kaggle_g_store\\all\\train.csv")
 # visitNumber - The session number for this user. If this is the first session, then this is set to 1.
 # visitStartTime - The timestamp (expressed as POSIX time).
 
-#20180920 Cleaning Data
+#20180920-20181015 Cleaning Data
 
 #1. datetime format cleaning
 library(lubridate)
@@ -149,7 +149,7 @@ for (i in c("visits","hits","pageviews","transactionRevenue","newVisits")){
 #https://www.kaggle.com/c/ga-customer-revenue-prediction/discussion/65775
 trainyall["transactionRevenue"]<-trainyall["transactionRevenue"]/10^6
 
-#7. EDA
+#8. EDA
 library(ggplot2)
 #for continuous variables
 cols<-classdf[classdf$class=="numeric","col",drop=T]
@@ -208,3 +208,119 @@ cor(otht,log(oty+1))
 #distribution: log(y+1)
 qqnorm(log(oty+1))#after log, y is normal
 hist(log(oty+1))
+#for categorical variables
+catevar<-data.frame(lapply(trainyall,is.character))
+vec<-colnames(catevar[,catevar==TRUE])
+plot_category<-function(vec,df){
+  for (i in vec){
+    barplot(table(df[[i]]),main=i)
+  }
+}
+plot_category(vec,trainyall)
+
+#9.final touch- delete visits column, because its all ones
+onehottedtrain$visits<-NULL
+trainyall$visits<-NULL
+
+#10.One-hot Code
+#TRY1: encoding try, credits: Fangyang Chen
+library(magrittr)
+tyl=trainyall
+tyl$socialEngagementType=NULL
+tyl$source=NULL
+oh=data.frame(model.matrix(~operatingSystem+browser+channelGrouping+browser+operatingSystem+deviceCategory+continent+subContinent+country-1,data=tyl))
+tyl$operatingSystem=NULL
+tyl$channelGrouping=NULL
+tyl$browser=NULL
+tyl$operatingSystem=NULL
+tyl$deviceCategory=NULL
+tyl$continent=NULL
+tyl$subContinent=NULL
+tyl$country=NULL
+onehottedtrain=cbind(tyl,oh)
+#TRY2: another try before encoding and then excoding: combine vars
+#1) columns that need to be one hotted
+col_to_do<-colnames(trainyall)[unlist(lapply(trainyall, is.character))]
+col_to_do<-col_to_do[-2]#exclude session_id
+#2) check how to combine, the summary of all character variables
+for (i in col_to_do){
+  print(i)
+  print(table(trainyall[,i]))
+}
+#3) combi_funcs: a function to combine two values into one
+combi_val<-function(data, col,combine1,combine2){
+  ide_v1<-function(x,y,z){
+        if(identical(x,y) | identical(x,z)){
+          paste(y,z,sep=", ")
+        }else{
+          x
+        }
+  }
+  result<-sapply(trainyall[[col]],function(x) ide_v1(x,combine1,combine2))
+  return(data.frame(result,stringsAsFactors = FALSE))
+}
+#4) combi_funcs: a function to combine values in a same category, used on "source" column
+ide_v2<-function(x,match){
+  vec<-paste("*",match,sep='')
+  if(is.element(x,source[grepl(vec,source)])){
+    paste(match,"type")
+  }else{
+    x
+  }
+}
+#5) combi_func: a function to combine values below a defined frequency, used on "source" column
+ide_v3<-function(x){
+  others<-source_2%>%filter(Freq<=2000)%>%select(Var1)
+  if(is.element(x,others[[1]])){
+    "other websites"
+  }else{
+    x
+  }
+}
+#6) dealing with different columns
+#for channelGrouping
+trainyall["channelGrouping_com"]<-combi_val(trainyall,col_to_do[1],"(Other)","Affiliates")
+table(trainyall[,"channelGrouping_com"])
+trainyall["channelGrouping_com"]<-combi_val(trainyall,"channelGrouping_com","(Other), Affiliates","Display")
+table(trainyall[,"channelGrouping_com"])
+trainyall["channelGrouping_com"]<-combi_val(trainyall,"channelGrouping_com","(Other), Affiliates, Display","Social")
+table(trainyall[,"channelGrouping_com"])
+trainyall["channelGrouping_com"]<-combi_val(trainyall,"channelGrouping_com","(Other), Affiliates, Display, Social","Paid Search")
+table(trainyall[,"channelGrouping_com"])
+#for browser
+result<-sapply(trainyall[["browser"]],function(x) ifelse(x=="Chrome",x,"Other Browsers"))
+trainyall["browser_com"]<-data.frame(result, stringsAsFactors = FALSE)
+table(trainyall["browser_com"])
+#for operatingSystem
+trainyall["operatingSystem_com"]<-combi_val(trainyall,col_to_do[3],"Windows","Windows Phone")
+table(trainyall[,"operatingSystem_com"])
+#for deviceCategory
+trainyall["deviceCategory_com"]<-combi_val(trainyall,col_to_do[4],"mobile","tablet")
+table(trainyall[,"deviceCategory_com"])
+#for country
+result<-sapply(trainyall[["country"]],function(x) ifelse(x=="United States",x,"Other Countries"))
+trainyall["country_com"]<-data.frame(result, stringsAsFactors = FALSE)
+table(trainyall[,"country_com"])
+#for source
+source<-unique(trainyall[["source"]])
+trainyall["source_com"]<-sapply(trainyall[["source"]],function(x) ide_v2(x,"google"))
+trainyall["source_com"]<-sapply(trainyall[["source_com"]],function(x) ide_v2(x,"yahoo"))
+trainyall["source_com"]<-sapply(trainyall[["source_com"]],function(x) ide_v2(x,"facebook"))
+source_2<-data.frame(table(trainyall["source_com"]))
+trainyall["source_com"]<-sapply(trainyall[["source_com"]],function(x) ide_v3(x))
+#7) wow we are almost done, lets do exploratory analysis on these columns again!
+vec1<-colnames(trainyall)[19:24]
+plot_category(vec1,trainyall)#after adjustment
+vec0<-colnames(trainyall)[c(1,6,7,9,12,17)]
+plot_category(vec0,trainyall)#after adjustment
+#8) FINALLY for Encoding part
+tyl_com<-trainyall
+tyl_com[,c(col_to_do)]<-NULL
+tyl_com[,colnames(trainyall)[19:24]]<-NULL
+onehottedtrain_com<-data.frame(model.matrix(~channelGrouping_com+browser_com+operatingSystem_com+deviceCategory_com+country_com+source_com-1,data=trainyall))
+onehottedtrain_com<-cbind(tyl_com,onehottedtrain_com)
+
+#20181015 Modeling
+library(randomForest)
+rf<-randomForest(transactionRevenue~.,data=onehottedtrain_com[,4:24],importance=TRUE)
+plot(rf)
