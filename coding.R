@@ -321,6 +321,62 @@ onehottedtrain_com<-data.frame(model.matrix(~channelGrouping_com+browser_com+ope
 onehottedtrain_com<-cbind(tyl_com,onehottedtrain_com)
 
 #20181015 Modeling
+#0. Create a log revenue column and adjust the onehottedtrain_com data to make it more model compatible...
+onehottedtrain_com["transactionRevenue_ln"]<-log(onehottedtrain_com$transactionRevenue)
+modeldata<-onehottedtrain_com[,4:25]#exclude columns of id and date
+modeldata<-modeldata[,-5]#exclude y, we only need lny
+modeldata$isMobile<-as.integer(modeldata$isMobile)#change the typeof of isMobile from logic to int
+modeldata$isTrueDirect<-as.integer(modeldata$isTrueDirect)#same as above
+#1. More exploratory data analysis(I didn't do this corrplot before...)
+library(corrplot)
+#corrplot the variables, the last one is lny
+corrplot(cor(modeldata),method="color",type="upper",tl.col = "black",tl.pos="lt",tl.cex = 0.5)
+corrplot(cor(modeldata),add=TRUE,method="number",type="lower",number.cex = 0.6,diag=FALSE,cl.pos="n",tl.pos = "n")
+#make adjustments
+modeldata$isMobile<-NULL#this variable is highly relevant with device category, no use then
+modeldata$hits<-NULL#this variable is hightly relevant with pageviews and it is not recommended using due to kaggle's description
+#corrplot it again, the last one is lny
+corrplot(cor(modeldata),method="color",type="upper",tl.col = "black",tl.pos="lt",tl.cex = 0.5)
+corrplot(cor(modeldata),add=TRUE,method="number",type="lower",number.cex = 0.6,diag=FALSE,cl.pos="n",tl.pos = "n")
+
+#2. RandomForest
 library(randomForest)
-rf<-randomForest(transactionRevenue~.,data=onehottedtrain_com[,4:24],importance=TRUE)
-plot(rf)
+len<-length(modeldata)
+r2<-rep(NA,len-1)
+mse<-rep(NA,len-1)
+set.seed(100)
+for (i in 1:(len-1)){
+  rf<-randomForest(transactionRevenue_ln~.,data=modeldata,mtry=i)
+  r2[i]<-mean(rf$rsq)
+  mse[i]<-mean(rf$mse)
+  cat("mtry is ",i,", mse is ",mse[i],", r2 is ",r2[i],"\n")
+}
+# mtry is  1 , mse is  1.298535 , r2 is  0.101914 
+# mtry is  2 , mse is  1.210594 , r2 is  0.1627353 
+# mtry is  3 , mse is  1.177739 , r2 is  0.1854582 
+# mtry is  4 , mse is  1.171488 , r2 is  0.1897822 
+# mtry is  5 , mse is  1.179527 , r2 is  0.1842217 
+# mtry is  6 , mse is  1.198995 , r2 is  0.1707579 
+# mtry is  7 , mse is  1.21482 , r2 is  0.159813 
+# mtry is  8 , mse is  1.234043 , r2 is  0.1465176 
+# mtry is  9 , mse is  1.250907 , r2 is  0.1348546 
+# mtry is  10 , mse is  1.268793 , r2 is  0.1224846 
+# mtry is  11 , mse is  1.284958 , r2 is  0.1113045 
+# mtry is  12 , mse is  1.298403 , r2 is  0.1020057 
+# mtry is  13 , mse is  1.311647 , r2 is  0.09284598 
+# mtry is  14 , mse is  1.321527 , r2 is  0.08601245 
+# mtry is  15 , mse is  1.33306 , r2 is  0.07803627 
+# mtry is  16 , mse is  1.337008 , r2 is  0.07530574 
+# mtry is  17 , mse is  1.344982 , r2 is  0.06979115 
+# mtry is  18 , mse is  1.349323 , r2 is  0.06678848
+#visualizing performance
+library(ggplot2)
+rf_models<-data.frame(mtry=1:(len-1),r2=r2,mse=mse)
+ggplot(aes(mse,r2),data=rf_models)+
+  geom_point()+
+    ylab("r2")+
+      xlab("mse")+
+        geom_text(aes(label=paste("mtry ",mtry)),data=rf_models) 
+#choose mtry=4
+rf_best<-randomForest(transactionRevenue_ln~.,data=modeldata,mtry=4)
+plot(rf_best)
