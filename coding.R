@@ -320,14 +320,14 @@ tyl_com[,colnames(trainyall)[19:24]]<-NULL
 onehottedtrain_com<-data.frame(model.matrix(~channelGrouping_com+browser_com+operatingSystem_com+deviceCategory_com+country_com+source_com-1,data=trainyall))
 onehottedtrain_com<-cbind(tyl_com,onehottedtrain_com)
 
-#20181015 Modeling
-#0. Create a log revenue column and adjust the onehottedtrain_com data to make it more model compatible...
+#11. Create a log revenue column and adjust the onehottedtrain_com data to make it more model compatible...
 onehottedtrain_com["transactionRevenue_ln"]<-log(onehottedtrain_com$transactionRevenue)
 modeldata<-onehottedtrain_com[,4:25]#exclude columns of id and date
 modeldata<-modeldata[,-5]#exclude y, we only need lny
 modeldata$isMobile<-as.integer(modeldata$isMobile)#change the typeof of isMobile from logic to int
 modeldata$isTrueDirect<-as.integer(modeldata$isTrueDirect)#same as above
-#1. More exploratory data analysis(I didn't do this corrplot before...)
+
+#12. More exploratory data analysis(I didn't do this corrplot before...)
 library(corrplot)
 #corrplot the variables, the last one is lny
 corrplot(cor(modeldata),method="color",type="upper",tl.col = "black",tl.pos="lt",tl.cex = 0.5)
@@ -339,44 +339,136 @@ modeldata$hits<-NULL#this variable is hightly relevant with pageviews and it is 
 corrplot(cor(modeldata),method="color",type="upper",tl.col = "black",tl.pos="lt",tl.cex = 0.5)
 corrplot(cor(modeldata),add=TRUE,method="number",type="lower",number.cex = 0.6,diag=FALSE,cl.pos="n",tl.pos = "n")
 
-#2. RandomForest
+#13. dealing with date data (adding two more variables, going through the process 10-12 again, including encoding)
+modeldata["weekday"]<-wday(onehottedtrain_com[[1]],label=TRUE)#adding weekday variable,1 is monday and so on
+modeldata["month"]<-month(onehottedtrain_com[[1]],label=TRUE)#adding month variable
+modeldata["year"]<-year(onehottedtrain_com[[1]])
+modeldata["quarter"]<-quarter(onehottedtrain_com[[1]])
+wddf<-modeldata%>%select(weekday,transactionRevenue_ln)%>%group_by(weekday)%>%summarise(tr=sum(transactionRevenue_ln))
+mdf<-modeldata%>%select(month,transactionRevenue_ln)%>%group_by(month)%>%summarise(tr=sum(transactionRevenue_ln))
+ydf<-modeldata%>%select(year,transactionRevenue_ln)%>%group_by(year)%>%summarise(tr=sum(transactionRevenue_ln))
+qdf<-modeldata%>%select(quarter,transactionRevenue_ln)%>%group_by(quarter)%>%summarise(tr=sum(transactionRevenue_ln))
+ggplot(aes(weekday,tr),data=wddf)+geom_col()
+ggplot(aes(month,tr),data=mdf)+geom_col()
+ggplot(aes(year,tr),data=ydf)+geom_col()#decided to ignore this variable
+ggplot(aes(quarter,tr),data=qdf)+geom_col()#decided to ignore this variable
+modeldata$year<-NULL
+modeldata$quarter<-NULL
+modeldata$month<-as.character(modeldata$month)
+modeldata$weekday<-as.character(modeldata$weekday)
+#going though ENCODING(part 10) again!!! encoding these two columns and put them into onehottedtrain_com and then to modeldata
+trainyall["month"]<-modeldata$month
+trainyall["weekday"]<-modeldata$weekday
+col_to_do<-colnames(trainyall)[unlist(lapply(trainyall, is.character))]
+col_to_do<-col_to_do[-2]#exclude session_id
+tyl_com<-trainyall
+tyl_com[,c(col_to_do)]<-NULL
+tyl_com[,colnames(trainyall)[19:24]]<-NULL
+onehottedtrain_com<-data.frame(model.matrix(~channelGrouping_com+browser_com+operatingSystem_com+deviceCategory_com+country_com+source_com+month+weekday-1,data=trainyall))
+onehottedtrain_com<-cbind(tyl_com,onehottedtrain_com)
+#going through data manipulating (part 11) again!!!
+onehottedtrain_com["transactionRevenue_ln"]<-log(onehottedtrain_com$transactionRevenue)
+modeldata<-onehottedtrain_com[,4:length(onehottedtrain_com)]#exclude columns of id and date
+modeldata<-modeldata[,-5]#exclude y, we only need lny
+modeldata$isMobile<-as.integer(modeldata$isMobile)#change the typeof of isMobile from logic to int
+modeldata$isTrueDirect<-as.integer(modeldata$isTrueDirect)#same as above
+#going through another eda solution (part 12) again!!!
+modeldata$isMobile<-NULL
+modeldata$hits<-NULL
+
+#20181015 Modeling
+#Ok I'm calling the variable "hits" back!
+modeldata["hits"]<-trainyall["hits"]
+#0. Some useful tools and dividing data sets into train and test
+get_rse<-function(testdataset,y_testdataset,y_predict){
+  a<-sum((y_predict-testdataset[[y_testdataset]])^2)
+  b<-var(testdataset[[y_testdataset]])
+  return(a/b)
+}
+get_rmse<-function(testdataset,y_testdataset,y_predict){
+  a<-sum((y_predict-testdataset[[y_testdataset]])^2)
+  return(sqrt(a/nrow(testdataset)))
+}
+# assign test and train set
+modeldata_copy<-modeldata
+n<-nrow(modeldata_copy)
+l<-length(modeldata_copy)
+modeldata_copy['train']<-rep(0,n)
+modeldata_copy[sample(n,n/2),'train']<-1
+train_copy<-modeldata_copy[modeldata_copy['train']==1,-(l+1)]
+test_copy<-modeldata_copy[modeldata_copy['train']!=1,-(l+1)]
+
+#1. RandomForest
 library(randomForest)
-len<-length(modeldata)
-r2<-rep(NA,len-1)
-mse<-rep(NA,len-1)
+r2<-rep(NA,l-1)
+mse<-rep(NA,l-1)
 set.seed(100)
-for (i in 1:(len-1)){
-  rf<-randomForest(transactionRevenue_ln~.,data=modeldata,mtry=i)
+for (i in 1:(l-1)){
+  rf<-randomForest(transactionRevenue_ln~.,data=train_copy,mtry=i)
   r2[i]<-mean(rf$rsq)
   mse[i]<-mean(rf$mse)
-  cat("mtry is ",i,", mse is ",mse[i],", r2 is ",r2[i],"\n")
+  cat("mtry is ",i,", mse is ",mse[i],"\n")
 }
-# mtry is  1 , mse is  1.298535 , r2 is  0.101914 
-# mtry is  2 , mse is  1.210594 , r2 is  0.1627353 
-# mtry is  3 , mse is  1.177739 , r2 is  0.1854582 
-# mtry is  4 , mse is  1.171488 , r2 is  0.1897822 
-# mtry is  5 , mse is  1.179527 , r2 is  0.1842217 
-# mtry is  6 , mse is  1.198995 , r2 is  0.1707579 
-# mtry is  7 , mse is  1.21482 , r2 is  0.159813 
-# mtry is  8 , mse is  1.234043 , r2 is  0.1465176 
-# mtry is  9 , mse is  1.250907 , r2 is  0.1348546 
-# mtry is  10 , mse is  1.268793 , r2 is  0.1224846 
-# mtry is  11 , mse is  1.284958 , r2 is  0.1113045 
-# mtry is  12 , mse is  1.298403 , r2 is  0.1020057 
-# mtry is  13 , mse is  1.311647 , r2 is  0.09284598 
-# mtry is  14 , mse is  1.321527 , r2 is  0.08601245 
-# mtry is  15 , mse is  1.33306 , r2 is  0.07803627 
-# mtry is  16 , mse is  1.337008 , r2 is  0.07530574 
-# mtry is  17 , mse is  1.344982 , r2 is  0.06979115 
-# mtry is  18 , mse is  1.349323 , r2 is  0.06678848
-#visualizing performance
-library(ggplot2)
-rf_models<-data.frame(mtry=1:(len-1),r2=r2,mse=mse)
-ggplot(aes(mse,r2),data=rf_models)+
-  geom_point()+
-    ylab("r2")+
-      xlab("mse")+
-        geom_text(aes(label=paste("mtry ",mtry)),data=rf_models) 
-#choose mtry=4
-rf_best<-randomForest(transactionRevenue_ln~.,data=modeldata,mtry=4)
+#choose mtry=3
+rf_best<-randomForest(transactionRevenue_ln~.,data=train_copy,mtry=3)
 plot(rf_best)
+rf_mse<-sqrt(mean(rf$mse))#1.087
+
+#2. GBDT
+library(gbm)
+# modeling with GBDT, use cross validation to get best trees num
+gbdt<-gbm(transactionRevenue_ln~.,data=train_copy,distribution="gaussian",n.trees=3000,shrinkage=0.1,interaction.depth = 3,cv.folds=5)
+best_trees_iter <- gbm.perf(gbdt,method="cv")
+summary(gbdt,best_trees_iter)
+#evaluate transactionRevenue_ln prediction RSE
+predict_test2<-predict(gbdt,test_copy,best_trees_iter)
+gbdt_mse<-get_rmse(test_copy,"transactionRevenue_ln",predict_test2)#1.083
+#adjust parameters...
+#attempt 2
+set.seed(100)
+gbdt2<-gbm(transactionRevenue_ln~.,data=train_copy,distribution="gaussian",n.trees=1000,shrinkage=0.01,interaction.depth = 3,cv.folds=5)
+best_trees_iter <- gbm.perf(gbdt2,method="cv")
+predict_test2<-predict(gbdt2,test_copy,best_trees_iter)
+gbdt2_mse<-get_rmse(test_copy,"transactionRevenue_ln",predict_test2)#1.079324
+#attempt 3
+set.seed(100)
+gbdt3<-gbm(transactionRevenue_ln~.,data=train_copy,distribution="gaussian",n.trees=2000,shrinkage=0.05,interaction.depth = 3,cv.folds=5)
+best_trees_iter <- gbm.perf(gbdt3,method="cv")
+predict_test2<-predict(gbdt3,test_copy,best_trees_iter)
+gbdt3_mse<-get_rmse(test_copy,"transactionRevenue_ln",predict_test2)#1.078397
+#attempt 4
+set.seed(100)
+gbdt4<-gbm(transactionRevenue_ln~.,data=train_copy,distribution="gaussian",n.trees=2000,shrinkage=0.02,interaction.depth = 3,cv.folds=5)
+best_trees_iter <- gbm.perf(gbdt4,method="cv")
+predict_test2<-predict(gbdt4,test_copy,best_trees_iter)
+gbdt4_mse<-get_rmse(test_copy,"transactionRevenue_ln",predict_test2)#1.078758
+#attempt 5
+set.seed(100)
+gbdt5<-gbm(transactionRevenue_ln~.,data=train_copy,distribution="gaussian",n.trees=2000,shrinkage=0.03,interaction.depth = 3,cv.folds=5)
+best_trees_iter <- gbm.perf(gbdt5,method="cv")
+predict_test2<-predict(gbdt5,test_copy,best_trees_iter)
+gbdt5_mse<-get_rmse(test_copy,"transactionRevenue_ln",predict_test2)#1.077228
+#attempt 6
+set.seed(100)
+gbdt6<-gbm(transactionRevenue_ln~.,data=train_copy,distribution="gaussian",n.trees=2000,shrinkage=0.04,interaction.depth = 3,cv.folds=5)
+best_trees_iter <- gbm.perf(gbdt6,method="cv")
+predict_test2<-predict(gbdt6,test_copy,best_trees_iter)
+gbdt6_mse<-get_rmse(test_copy,"transactionRevenue_ln",predict_test2)#1.078652
+#attempt 7
+set.seed(100)
+gbdt7<-gbm(transactionRevenue_ln~.,data=train_copy,distribution="gaussian",n.trees=2000,shrinkage=0.03,interaction.depth = 2,cv.folds=5)
+best_trees_iter <- gbm.perf(gbdt7,method="cv")
+predict_test2<-predict(gbdt7,test_copy,best_trees_iter)
+gbdt7_mse<-get_rmse(test_copy,"transactionRevenue_ln",predict_test2)#1.080073
+#attempt 8
+set.seed(100)
+gbdt8<-gbm(transactionRevenue_ln~.,data=train_copy,distribution="gaussian",n.trees=2000,shrinkage=0.03,interaction.depth = 4,cv.folds=5)
+best_trees_iter <- gbm.perf(gbdt8,method="cv")
+predict_test2<-predict(gbdt8,test_copy,best_trees_iter)
+gbdt8_mse<-get_rmse(test_copy,"transactionRevenue_ln",predict_test2)#1.077747
+#Result:
+set.seed(100)
+gbdt<-gbm(transactionRevenue_ln~.,data=train_copy,distribution="gaussian",n.trees=2000,shrinkage=0.03,interaction.depth = 3,cv.folds=5)
+best_trees_iter <- gbm.perf(gbdt,method="cv")
+predict_test2<-predict(gbdt,test_copy,best_trees_iter)
+gbdt_mse<-get_rmse(test_copy,"transactionRevenue_ln",predict_test2)#1.077228
