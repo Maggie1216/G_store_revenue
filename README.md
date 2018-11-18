@@ -1,5 +1,5 @@
 # G_store_revenue
-Kaggle project 201809-201810
+Kaggle project 201809-201811
 
 ## Files and Timeline
 ### Updating
@@ -50,3 +50,9 @@ workspace_10000 samples in test, all train with y(unit $) + datetime and data cl
 -More data cleaning based on the eda, e.g. removed highly relevant variables;
 
 -RF model, with rf_models and rf_best (now R-square is about 18%).
+### Created 20181118
+[RF+GBDT]workspace_10000 samples in test, all train with y(unit $) + datetime and data class ad NA dealt with+onehotecoding_2_versions+More Cleaning.RData
+
+- Took back the hits variable because of high performance;
+
+- GBDT model and some improvement on RF model
